@@ -14,7 +14,7 @@ fn main() {
 
     // Hashmap containing id, name
     let mut current_time:f64 = 0.0;
-    let mut hm: HashMap<i32, (String, String, f64)> = HashMap::new();
+    let mut hm: HashMap<i32, (String, String, f64, f64)> = HashMap::new();
 
 
     // Regex patterns
@@ -32,7 +32,7 @@ fn main() {
                 caps[6].to_string(),
             );
             // Insert element in hashmap
-            hm.insert(id, (name, vehicle, current_time));
+            hm.insert(id, (name, vehicle, current_time, 0.0));
         }
         else if let Some(caps) = time_pattern.captures(line)  {
             current_time = caps[1].parse::<f64>().unwrap();
@@ -41,7 +41,7 @@ fn main() {
     }
 
     println!("\nHashMap contents:");
-    for (key, (ref x, ref y, time)) in &hm {
+    for (key, (ref x, ref y, time, _last_time)) in &hm {
         println!("{}: {} in {} at {}", key, x, y, time);
     }
 
