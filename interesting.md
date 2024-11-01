@@ -36,3 +36,7 @@ match i32::from_str_radix(&caps[1], 16) {
 //4. Propagate error ?
 let value = i32::from_str_radix(hex_str, 16)?;
 ```
+
+- f64 implements copy traits
+
+Then, when inserting a mutable f64 inside a f64 hashmap, it is copied
