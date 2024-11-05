@@ -13,7 +13,7 @@
 
 Caps reference lifetime not enough for hashmap
 to_string -> create a new string on heap, will have the lifetime of the hashmap 
-
+to_owned() -> transfer ownership
 - Different style of unwrap
 
 ``` rust
