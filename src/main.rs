@@ -1,5 +1,6 @@
 mod computation;
 
+use computation::haversine_distance;
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs::read_to_string;
@@ -7,7 +8,6 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 use std::time::Instant;
-use computation::haversine_distance;
 
 fn contains_any(name: &str, list: &[&str]) -> bool {
     list.iter().any(|&item| name.contains(item))
@@ -19,9 +19,12 @@ fn create_matcher(ids: &HashMap<i32, (String, String, f64, f64)>) -> Regex {
         .map(|k| format!("{:X}", k))
         .collect::<Vec<_>>()
         .join("|");
-    Regex::new(&format!(r"^({}),T=([0-9\.]*)\|([0-9\.]*)\|([0-9\.]*)", id_pattern)).unwrap()
+    Regex::new(&format!(
+        r"^({}),T=([0-9\.]*)\|([0-9\.]*)\|([0-9\.]*)",
+        id_pattern
+    ))
+    .unwrap()
 }
-
 
 fn main() {
     // Todo: read file from zip
@@ -50,7 +53,10 @@ fn main() {
 
     let mut coord_pattern = create_matcher(&id_main);
     // Parse file
-    for line in read_to_string(&path).expect("Failed to read the file").lines() {
+    for line in read_to_string(&path)
+        .expect("Failed to read the file")
+        .lines()
+    {
         match line {
             line if line.contains("Pilot=") => {
                 if let Some(caps) = pilot_creation_pattern.captures(line) {
@@ -71,16 +77,20 @@ fn main() {
                 }
             }
             line if line.starts_with('#') => {
-                current_time = line.strip_prefix('#').unwrap().parse::<f64>().expect("Invalid time format");
+                current_time = line
+                    .strip_prefix('#')
+                    .unwrap()
+                    .parse::<f64>()
+                    .expect("Invalid time format");
             }
             line if line.contains("T=") => {
-                if coord_pattern.is_match(line){
+                if coord_pattern.is_match(line) {
                     if let Some(caps) = coord_pattern.captures(line) {
                         let mut lat = caps[2].to_owned();
                         let mut long = caps[3].to_owned();
                         let mut alt = caps[4].to_owned();
                         let id = i32::from_str_radix(&caps[1], 16).unwrap();
-    
+
                         if lat.is_empty() {
                             lat = id_coords.get(&id).unwrap().0.to_string();
                         }
@@ -90,20 +100,26 @@ fn main() {
                         if alt.is_empty() {
                             alt = id_coords.get(&id).unwrap().2.to_string();
                         }
-                        
-                        id_coords.insert(id,
-                         (lat.parse::<f32>().unwrap(), long.parse::<f32>().unwrap(), alt.parse::<f32>().unwrap()));
+
+                        id_coords.insert(
+                            id,
+                            (
+                                lat.parse::<f32>().unwrap(),
+                                long.parse::<f32>().unwrap(),
+                                alt.parse::<f32>().unwrap(),
+                            ),
+                        );
                     }
-                } else if weapon_creation_pattern.is_match(line){
+                } else if weapon_creation_pattern.is_match(line) {
                     if let Some(caps) = weapon_creation_pattern.captures(line) {
-                        if(id_coords.get(&1027).is_some()){
+                        if (id_coords.get(&1027).is_some()) {
                             let lat = caps[2].parse::<f32>().expect("Invalid latitude");
                             let long = caps[3].parse::<f32>().expect("Invalid longitude");
                             let lat2 = id_coords.get(&1027).unwrap().0;
                             let long2 = id_coords.get(&1027).unwrap().1;
                             let dist = haversine_distance(lat, long, lat2, long2);
                             if dist < 0.1 {
-                                println!("{} at distance {}", &caps[6], dist);    
+                                println!("{} at distance {}", &caps[6], dist);
                             }
                         }
                     }
