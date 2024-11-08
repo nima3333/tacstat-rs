@@ -27,13 +27,13 @@ fn create_matcher(ids: &HashMap<i32, (String, String, f64, f64)>) -> Regex {
 }
 
 fn increment_weapon_counter(
-    map: &mut HashMap<i32, HashMap<String, i32>>, 
-    id: i32, 
-    weapon_name: &str
+    map: &mut HashMap<i32, HashMap<String, i32>>,
+    id: i32,
+    weapon_name: &str,
 ) {
     // Access the inner hashmap for the given id, or insert a new empty one if it doesn't exist
     let weapon_map = map.entry(id).or_insert_with(HashMap::new);
-    
+
     // Increment the counter for the weapon, starting from 1 if it doesn’t exist
     let counter = weapon_map.entry(weapon_name.to_string()).or_insert(0);
     *counter += 1;
@@ -59,7 +59,7 @@ fn main() {
 
     // Names to whitelist
     let whitelist = vec!["nima3333", "Nouveau Surnom"];
-    // 
+    //
     let mut bool_watch = true;
 
     // Regex patterns
@@ -76,7 +76,7 @@ fn main() {
             line if line.contains("Pilot=") => {
                 if let Some(caps) = pilot_creation_pattern.captures(line) {
                     let id = i32::from_str_radix(&caps[1], 16).expect("Invalid ID");
-                    let name = caps[7].to_owned();
+                    let name: String = caps[7].to_owned();
                     let vehicle = caps[6].to_owned();
                     let lat = caps[2].parse::<f32>().expect("Invalid latitude");
                     let long = caps[3].parse::<f32>().expect("Invalid longitude");
@@ -98,6 +98,12 @@ fn main() {
                     .parse::<f64>()
                     .expect("Invalid time format");
                 bool_watch = !bool_watch;
+            }
+            line if line.starts_with('-') => {
+                let id = i32::from_str_radix(line.strip_prefix('-').unwrap(), 16).unwrap();
+                if let Some(entry) = id_main.get_mut(&id) {
+                    entry.3 = current_time;
+                }
             }
             line if line.contains("T=") => {
                 if bool_watch && coord_pattern.is_match(line) {
