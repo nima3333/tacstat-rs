@@ -26,6 +26,19 @@ fn create_matcher(ids: &HashMap<i32, (String, String, f64, f64)>) -> Regex {
     .unwrap()
 }
 
+fn increment_weapon_counter(
+    map: &mut HashMap<i32, HashMap<String, i32>>, 
+    id: i32, 
+    weapon_name: &str
+) {
+    // Access the inner hashmap for the given id, or insert a new empty one if it doesn't exist
+    let weapon_map = map.entry(id).or_insert_with(HashMap::new);
+    
+    // Increment the counter for the weapon, starting from 1 if it doesn’t exist
+    let counter = weapon_map.entry(weapon_name.to_string()).or_insert(0);
+    *counter += 1;
+}
+
 fn main() {
     // Todo: read file from zip
     let start = Instant::now();
@@ -46,6 +59,8 @@ fn main() {
 
     // Names to whitelist
     let whitelist = vec!["nima3333", "Nouveau Surnom"];
+    // 
+    let mut bool_watch = true;
 
     // Regex patterns
     let pilot_creation_pattern = Regex::new(r"^([0-9a-f]+),T=([0-9\.-]+)\|([0-9\.-]+)\|([0-9\.-]+)[0-9\.|-]+,Type=([\w+]+),Name=([\w+\- \._]+),Pilot=([\w+\- \|]+)").unwrap();
@@ -82,9 +97,10 @@ fn main() {
                     .unwrap()
                     .parse::<f64>()
                     .expect("Invalid time format");
+                bool_watch = !bool_watch;
             }
             line if line.contains("T=") => {
-                if coord_pattern.is_match(line) {
+                if bool_watch && coord_pattern.is_match(line) {
                     if let Some(caps) = coord_pattern.captures(line) {
                         let mut lat = caps[2].to_owned();
                         let mut long = caps[3].to_owned();
@@ -119,7 +135,8 @@ fn main() {
                             let long2 = id_coords.get(&1027).unwrap().1;
                             let dist = haversine_distance(lat, long, lat2, long2);
                             if dist < 0.1 {
-                                println!("{} at distance {}", &caps[6], dist);
+                                let weapon = caps[6].to_owned();
+                                increment_weapon_counter(&mut id_weapon, 1027, &weapon);
                             }
                         }
                     }
@@ -128,11 +145,8 @@ fn main() {
             _ => {} // Ignore lines that don't match any condition
         }
     }
-
-    println!("\nHashMap contents:");
-    for (key, (ref x, ref y, time, _last_time)) in &id_main {
-        println!("{}: {} in {} at {}", key, x, y, time);
-    }
+    println!("{:#?}", id_weapon);
+    println!("{:#?}", id_main);
 
     let duration = start.elapsed();
     println!("Execution time: {:?}", duration);
