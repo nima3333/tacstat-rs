@@ -137,12 +137,13 @@ fn main() {
                         if (id_coords.get(&1027).is_some()) {
                             let lat = caps[2].parse::<f32>().expect("Invalid latitude");
                             let long = caps[3].parse::<f32>().expect("Invalid longitude");
-                            let lat2 = id_coords.get(&1027).unwrap().0;
-                            let long2 = id_coords.get(&1027).unwrap().1;
-                            let dist = haversine_distance(lat, long, lat2, long2);
-                            if dist < 0.1 {
-                                let weapon = caps[6].to_owned();
-                                increment_weapon_counter(&mut id_weapon, 1027, &weapon);
+
+                            for (&id, &(lat2, long2, _)) in &id_coords {
+                                let dist = haversine_distance(lat, long, lat2, long2);
+                                if dist < 0.1 {
+                                    let weapon = caps[6].to_owned();
+                                    increment_weapon_counter(&mut id_weapon, id, &weapon);
+                                }
                             }
                         }
                     }
