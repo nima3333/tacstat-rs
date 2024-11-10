@@ -4,7 +4,7 @@ use computation::haversine_distance;
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs::read_to_string;
-use std::fs::File;
+
 use std::io::prelude::*;
 use std::path::Path;
 use std::time::Instant;
@@ -46,7 +46,7 @@ fn main() {
     // Create a path to the desired file
     // let path = Path::new("Tacview-20220630-011729-DCS-test_dmt_av8.txt.acmi");
     let path = Path::new("Tacview-20240924-003100-DCS-Client-Operation-Sirab_Part_2_20240923-1.zip\\Tacview-20240924-003100-DCS-Client-Operation-Sirab_Part_2_20240923-1.txt.acmi");
-    let display = path.display();
+    let _display = path.display();
 
     // Time
     let mut current_time: f64 = 0.0;
@@ -134,7 +134,7 @@ fn main() {
                     }
                 } else if weapon_creation_pattern.is_match(line) {
                     if let Some(caps) = weapon_creation_pattern.captures(line) {
-                        if (id_coords.get(&1027).is_some()) {
+                        if !id_coords.is_empty() {
                             let lat = caps[2].parse::<f32>().expect("Invalid latitude");
                             let long = caps[3].parse::<f32>().expect("Invalid longitude");
 
