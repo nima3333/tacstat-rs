@@ -1,7 +1,7 @@
 mod models;
 mod utils;
 
-use models::{PlayerInfo, Position, GameState};
+use models::{GameState, PlayerInfo, Position};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs::read_to_string;
@@ -114,9 +114,13 @@ fn main() {
                         if alt.is_empty() {
                             alt = gamestate.positions.get(&id).unwrap().alt.to_string();
                         }
-                        
+
                         if let Some(entry) = gamestate.positions.get_mut(&id) {
-                            entry.update(lat.parse::<f32>().unwrap(), long.parse::<f32>().unwrap(), alt.parse::<f32>().unwrap());
+                            entry.update(
+                                lat.parse::<f32>().unwrap(),
+                                long.parse::<f32>().unwrap(),
+                                alt.parse::<f32>().unwrap(),
+                            );
                         }
                     }
                 } else if weapon_creation_pattern.is_match(line) {
@@ -130,7 +134,11 @@ fn main() {
                                 let dist: f32 = position.distance_to(&position_weapon);
                                 if dist < WEAPON_DISTANCE_THRESHOLD {
                                     let weapon = caps[6].to_owned();
-                                    increment_weapon_counter(&mut gamestate.weapon_stats, id, &weapon);
+                                    increment_weapon_counter(
+                                        &mut gamestate.weapon_stats,
+                                        id,
+                                        &weapon,
+                                    );
                                 }
                             }
                         }

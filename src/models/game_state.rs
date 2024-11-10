@@ -21,7 +21,5 @@ impl GameState {
         );
         self.positions.insert(id, pos);
     }
-
-    // ... rest of the implementation
 }
 
