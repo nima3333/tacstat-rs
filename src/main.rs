@@ -1,19 +1,21 @@
-mod computation;
+mod models;
+mod utils;
 
-use computation::haversine_distance;
+use models::{PlayerInfo, Position, GameState};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs::read_to_string;
 
-use std::io::prelude::*;
 use std::path::Path;
 use std::time::Instant;
 
-fn contains_any(name: &str, list: &[&str]) -> bool {
-    list.iter().any(|&item| name.contains(item))
+const WEAPON_DISTANCE_THRESHOLD: f32 = 0.1;
+
+fn contains_any(name: &String, list: &Vec<String>) -> bool {
+    list.iter().any(|item| name.contains(item))
 }
 
-fn create_matcher(ids: &HashMap<i32, (String, String, f64, f64)>) -> Regex {
+fn create_matcher(ids: &HashMap<i32, PlayerInfo>) -> Regex {
     let id_pattern = ids
         .keys()
         .map(|k| format!("{:X}", k))
@@ -31,12 +33,11 @@ fn increment_weapon_counter(
     id: i32,
     weapon_name: &str,
 ) {
-    // Access the inner hashmap for the given id, or insert a new empty one if it doesn't exist
-    let weapon_map = map.entry(id).or_insert_with(HashMap::new);
-
-    // Increment the counter for the weapon, starting from 1 if it doesn’t exist
-    let counter = weapon_map.entry(weapon_name.to_string()).or_insert(0);
-    *counter += 1;
+    map.entry(id)
+        .or_default()
+        .entry(weapon_name.to_string())
+        .and_modify(|count| *count += 1)
+        .or_insert(1);
 }
 
 fn main() {
@@ -49,16 +50,10 @@ fn main() {
     let _display = path.display();
 
     // Time
-    let mut current_time: f64 = 0.0;
-    // Hashmap containing id -> name, vehicle, time_creation, time_deletion
-    let mut id_main: HashMap<i32, (String, String, f64, f64)> = HashMap::new();
-    // Hashmap containing id -> current_pos (lat/long/alt)
-    let mut id_coords: HashMap<i32, (f32, f32, f32)> = HashMap::new();
-    // Hashmap containing id -> (weapon name, nb fired)
-    let mut id_weapon: HashMap<i32, HashMap<String, i32>> = HashMap::new();
-
+    let mut gamestate = GameState::new();
     // Names to whitelist
-    let whitelist = vec!["nima3333", "Nouveau Surnom"];
+    let whitelist: Vec<String> = vec!["nima3333".to_string(), "Nouveau Surnom".to_string()];
+
     //
     let mut bool_watch = true;
 
@@ -66,7 +61,7 @@ fn main() {
     let pilot_creation_pattern = Regex::new(r"^([0-9a-f]+),T=([0-9\.-]+)\|([0-9\.-]+)\|([0-9\.-]+)[0-9\.|-]+,Type=([\w+]+),Name=([\w+\- \._]+),Pilot=([\w+\- \|]+)").unwrap();
     let weapon_creation_pattern = Regex::new(r"^([0-9a-f]+),T=([0-9\.-]+)\|([0-9\.-]+)\|([0-9\.-]+)[0-9\.|-]+,Type=([\w+]+),Name=([\w+\- \._]+)").unwrap();
 
-    let mut coord_pattern = create_matcher(&id_main);
+    let mut coord_pattern = create_matcher(&gamestate.players);
     // Parse file
     for line in read_to_string(&path)
         .expect("Failed to read the file")
@@ -83,16 +78,13 @@ fn main() {
                     let alt = caps[4].parse::<f32>().expect("Invalid altitude");
 
                     if contains_any(&name, &whitelist) {
-                        // Insert into hashmaps
-                        id_main.insert(id, (name, vehicle, current_time, 0.0));
-                        id_coords.insert(id, (lat, long, alt));
-                        // Update regex matcher
-                        coord_pattern = create_matcher(&id_main);
+                        gamestate.add_player(id, name, vehicle, Position::new(lat, long, alt));
+                        coord_pattern = create_matcher(&gamestate.players);
                     }
                 }
             }
             line if line.starts_with('#') => {
-                current_time = line
+                gamestate.current_time = line
                     .strip_prefix('#')
                     .unwrap()
                     .parse::<f64>()
@@ -101,8 +93,8 @@ fn main() {
             }
             line if line.starts_with('-') => {
                 let id = i32::from_str_radix(line.strip_prefix('-').unwrap(), 16).unwrap();
-                if let Some(entry) = id_main.get_mut(&id) {
-                    entry.3 = current_time;
+                if let Some(entry) = gamestate.players.get_mut(&id) {
+                    entry.mark_deleted(gamestate.current_time);
                 }
             }
             line if line.contains("T=") => {
@@ -114,35 +106,31 @@ fn main() {
                         let id = i32::from_str_radix(&caps[1], 16).unwrap();
 
                         if lat.is_empty() {
-                            lat = id_coords.get(&id).unwrap().0.to_string();
+                            lat = gamestate.positions.get(&id).unwrap().lat.to_string();
                         }
                         if long.is_empty() {
-                            long = id_coords.get(&id).unwrap().1.to_string();
+                            long = gamestate.positions.get(&id).unwrap().long.to_string();
                         }
                         if alt.is_empty() {
-                            alt = id_coords.get(&id).unwrap().2.to_string();
+                            alt = gamestate.positions.get(&id).unwrap().alt.to_string();
                         }
-
-                        id_coords.insert(
-                            id,
-                            (
-                                lat.parse::<f32>().unwrap(),
-                                long.parse::<f32>().unwrap(),
-                                alt.parse::<f32>().unwrap(),
-                            ),
-                        );
+                        
+                        if let Some(entry) = gamestate.positions.get_mut(&id) {
+                            entry.update(lat.parse::<f32>().unwrap(), long.parse::<f32>().unwrap(), alt.parse::<f32>().unwrap());
+                        }
                     }
                 } else if weapon_creation_pattern.is_match(line) {
                     if let Some(caps) = weapon_creation_pattern.captures(line) {
-                        if !id_coords.is_empty() {
+                        if !gamestate.positions.is_empty() {
                             let lat = caps[2].parse::<f32>().expect("Invalid latitude");
                             let long = caps[3].parse::<f32>().expect("Invalid longitude");
+                            let position_weapon = Position::new(lat, long, 0.0);
 
-                            for (&id, &(lat2, long2, _)) in &id_coords {
-                                let dist = haversine_distance(lat, long, lat2, long2);
-                                if dist < 0.1 {
+                            for (&id, &position) in &gamestate.positions {
+                                let dist: f32 = position.distance_to(&position_weapon);
+                                if dist < WEAPON_DISTANCE_THRESHOLD {
                                     let weapon = caps[6].to_owned();
-                                    increment_weapon_counter(&mut id_weapon, id, &weapon);
+                                    increment_weapon_counter(&mut gamestate.weapon_stats, id, &weapon);
                                 }
                             }
                         }
@@ -152,8 +140,8 @@ fn main() {
             _ => {} // Ignore lines that don't match any condition
         }
     }
-    println!("{:#?}", id_weapon);
-    println!("{:#?}", id_main);
+    println!("{:#?}", gamestate.weapon_stats);
+    println!("{:#?}", gamestate.players);
 
     let duration = start.elapsed();
     println!("Execution time: {:?}", duration);
