@@ -5,6 +5,9 @@ use models::{GameState, PlayerInfo, Position};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs::read_to_string;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use zip::ZipArchive;
 
 use std::path::Path;
 use std::time::Instant;
@@ -40,14 +43,26 @@ fn increment_weapon_counter(
         .or_insert(1);
 }
 
-fn main() {
-    // Todo: read file from zip
+fn main() -> Result<(), Box<dyn std::error::Error>>{
     let start = Instant::now();
 
-    // Create a path to the desired file
-    // let path = Path::new("Tacview-20220630-011729-DCS-test_dmt_av8.txt.acmi");
-    let path = Path::new("Tacview-20240924-003100-DCS-Client-Operation-Sirab_Part_2_20240923-1.zip\\Tacview-20240924-003100-DCS-Client-Operation-Sirab_Part_2_20240923-1.txt.acmi");
-    let _display = path.display();
+    // Open the ZIP file
+    let file = File::open("Tacview-20240924-003100-DCS-Client-Operation-Sirab_Part_2_20240923-1.zip.acmi")?;
+    let mut archive = ZipArchive::new(file)?;
+
+    // Check if there is only one file in the archive
+    if archive.len() != 1 {
+        return Err("ZIP archive must contain exactly one file".into());
+    }
+
+    // Get the first (and only) file in the archive
+    let mut zip_file = archive.by_index(0)?;
+
+    println!("Processing file: {}", zip_file.name());
+
+    // Create a buffered reader for the ZIP file
+    let reader = BufReader::new(zip_file);
+    
 
     // Time
     let mut gamestate = GameState::new();
@@ -63,13 +78,11 @@ fn main() {
 
     let mut coord_pattern = create_matcher(&gamestate.players);
     // Parse file
-    for line in read_to_string(&path)
-        .expect("Failed to read the file")
-        .lines()
+    for line in reader.lines()
     {
-        match line {
+        match line? {
             line if line.contains("Pilot=") => {
-                if let Some(caps) = pilot_creation_pattern.captures(line) {
+                if let Some(caps) = pilot_creation_pattern.captures(&line) {
                     let id = i32::from_str_radix(&caps[1], 16).expect("Invalid ID");
                     let name: String = caps[7].to_owned();
                     let vehicle = caps[6].to_owned();
@@ -98,8 +111,8 @@ fn main() {
                 }
             }
             line if line.contains("T=") => {
-                if bool_watch && coord_pattern.is_match(line) {
-                    if let Some(caps) = coord_pattern.captures(line) {
+                if bool_watch && coord_pattern.is_match(&line) {
+                    if let Some(caps) = coord_pattern.captures(&line) {
                         let mut lat = caps[2].to_owned();
                         let mut long = caps[3].to_owned();
                         let mut alt = caps[4].to_owned();
@@ -123,8 +136,8 @@ fn main() {
                             );
                         }
                     }
-                } else if weapon_creation_pattern.is_match(line) {
-                    if let Some(caps) = weapon_creation_pattern.captures(line) {
+                } else if weapon_creation_pattern.is_match(&line) {
+                    if let Some(caps) = weapon_creation_pattern.captures(&line) {
                         if !gamestate.positions.is_empty() {
                             let lat = caps[2].parse::<f32>().expect("Invalid latitude");
                             let long = caps[3].parse::<f32>().expect("Invalid longitude");
@@ -153,4 +166,6 @@ fn main() {
 
     let duration = start.elapsed();
     println!("Execution time: {:?}", duration);
+
+    Ok(())
 }
