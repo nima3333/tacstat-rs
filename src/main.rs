@@ -7,71 +7,22 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use zip::ZipArchive;
+use std::io::Cursor;
 
 use std::path::Path;
 use std::time::Instant;
+use std::ffi::OsStr;
 
-const WEAPON_DISTANCE_THRESHOLD: f32 = 0.5;
-
-fn contains_any(name: &String, list: &Vec<String>) -> bool {
-    list.iter().any(|item| name.contains(item))
-}
-
-fn create_matcher(ids: &HashMap<i32, PlayerInfo>) -> Regex {
-    let id_pattern = ids
-        .keys()
-        .map(|k| format!("{:x}", k))
-        .collect::<Vec<_>>()
-        .join("|");
-    Regex::new(&format!(
-        r"^({}),T=([0-9\.]*)\|([0-9\.]*)\|([0-9\.]*)",
-        id_pattern
-    ))
-    .unwrap()
-}
-
-fn increment_weapon_counter(
-    map: &mut HashMap<i32, HashMap<String, i32>>,
-    id: i32,
-    weapon_name: &str,
-) {
-    map.entry(id)
-        .or_default()
-        .entry(weapon_name.to_string())
-        .and_modify(|count| *count += 1)
-        .or_insert(1);
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn process_reader(reader: &mut dyn BufRead){   
     let start = Instant::now();
-
-    // Open the ZIP file
-    let file = File::open(
-        "Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip.acmi",
-    )?;
-    let mut archive = ZipArchive::new(file)?;
-
-    // Check if there is only one file in the archive
-    if archive.len() != 1 {
-        return Err("ZIP archive must contain exactly one file".into());
-    }
-
-    // Get the first (and only) file in the archive
-    let mut zip_file = archive.by_index(0)?;
-
-    println!("Processing file: {}", zip_file.name());
-
-    // Create a buffered reader for the ZIP file
-    let reader = BufReader::new(zip_file);
-
+ 
     // Time
     let mut gamestate = GameState::new();
     // Names to whitelist
-    let whitelist: Vec<String> = vec!["nima3333".to_string(), "Nouveau Surnom".to_string()];
+    let whitelist: Vec<String> = vec!["nima3333".to_string()];
 
-    //
     let mut bool_watch = true;
 
     // Regex patterns
@@ -83,9 +34,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .unwrap();
 
     let mut coord_pattern = create_matcher(&gamestate.players);
+    
     // Parse file
     for line in reader.lines() {
-        match line? {
+        match line.expect("Unable to read line") {
             line if line.contains("Pilot=") => {
                 if let Some(caps) = pilot_creation_pattern.captures(&line) {
                     let id = i32::from_str_radix(&caps[1], 16).expect("Invalid ID");
@@ -191,6 +143,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let duration = start.elapsed();
     println!("Execution time: {:?}", duration);
+
+}
+
+const WEAPON_DISTANCE_THRESHOLD: f32 = 0.5;
+
+fn contains_any(name: &String, list: &Vec<String>) -> bool {
+    list.iter().any(|item| name.contains(item))
+}
+
+fn create_matcher(ids: &HashMap<i32, PlayerInfo>) -> Regex {
+    let id_pattern = ids
+        .keys()
+        .map(|k| format!("{:x}", k))
+        .collect::<Vec<_>>()
+        .join("|");
+    Regex::new(&format!(
+        r"^({}),T=([0-9\.]*)\|([0-9\.]*)\|([0-9\.]*)",
+        id_pattern
+    ))
+    .unwrap()
+}
+
+fn increment_weapon_counter(
+    map: &mut HashMap<i32, HashMap<String, i32>>,
+    id: i32,
+    weapon_name: &str,
+) {
+    map.entry(id)
+        .or_default()
+        .entry(weapon_name.to_string())
+        .and_modify(|count| *count += 1)
+        .or_insert(1);
+}
+
+
+
+pub fn process_file(filename: &str){
+    let path = Path::new(filename);
+    let file = File::open(&path).unwrap();
+    if filename.ends_with(".zip.acmi"){
+        println!("Zipfile handling");
+        let mut archive_contents=zip::ZipArchive::new(file).unwrap();
+        let mut buf_reader = BufReader::new(archive_contents.by_index(0).unwrap());
+        
+        process_reader(&mut buf_reader);
+    } else {
+        println!("Normal handling");
+        process_reader(&mut BufReader::new(file));
+    }
+
+
+
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
+
+    let mut files: Vec<String> = Vec::new();
+
+    files.push(r"Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip.acmi".to_string());
+    files.push(r"Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip\Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].txt.acmi".to_string());
+
+    for f in files {
+        process_file(&f);
+    }
+
 
     Ok(())
 }
