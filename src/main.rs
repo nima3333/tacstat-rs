@@ -5,15 +5,21 @@ use models::PartialPlayerInfo;
 use models::{GameState, PlayerInfo, Position};
 use regex::Regex;
 use std::collections::HashMap;
-use std::fs::read_to_string;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
-use zip::ZipArchive;
-use std::io::Cursor;
+use std::io::{BufRead, BufReader};
 
 use std::path::Path;
 use std::time::Instant;
-use std::ffi::OsStr;
+
+use std::{fs, io, path::PathBuf};
+
+fn get_files_in_folder(path: &str) -> io::Result<Vec<PathBuf>> {
+    let entries = fs::read_dir(path)?;
+    let all: Vec<PathBuf> = entries
+        .filter_map(|entry| Some(entry.ok()?.path()))
+        .collect();
+    Ok(all)
+}
 
 fn process_reader(reader: &mut dyn BufRead){   
     let start = Instant::now();
@@ -58,7 +64,7 @@ fn process_reader(reader: &mut dyn BufRead){
             line if line.contains("PilotHead") => {
                 if let Some(caps) = pilot_relaxed_creation_pattern.captures(&line) {
                     let id = i32::from_str_radix(&caps[1], 16).expect("Invalid ID");
-                    if let Some(entry) = gamestate.players.get_mut(&id) {
+                    if let Some(_entry) = gamestate.players.get_mut(&id) {
                     } else {
                         let player_info: PartialPlayerInfo =
                             gamestate.partial_players.get(&id).unwrap().clone();
@@ -82,13 +88,19 @@ fn process_reader(reader: &mut dyn BufRead){
                 bool_watch = !bool_watch;
             }
             line if line.starts_with('-') => {
-                let id = i32::from_str_radix(line.strip_prefix('-').unwrap(), 16).unwrap();
+                let id = match i32::from_str_radix(line.strip_prefix('-').expect("Strip error"), 16){
+                    Ok(num)=>num,
+                    Err(error)=>{
+                        continue;
+                    }
+                
+                };
                 if let Some(entry) = gamestate.players.get_mut(&id) {
                     entry.mark_deleted(gamestate.current_time);
                 }
             }
             line if line.contains("T=") => {
-                if bool_watch && coord_pattern.is_match(&line) {
+                if coord_pattern.is_match(&line) {
                     if let Some(caps) = coord_pattern.captures(&line) {
                         let mut lat = caps[2].to_owned();
                         let mut long = caps[3].to_owned();
@@ -146,7 +158,7 @@ fn process_reader(reader: &mut dyn BufRead){
 
 }
 
-const WEAPON_DISTANCE_THRESHOLD: f32 = 0.5;
+const WEAPON_DISTANCE_THRESHOLD: f32 = 1.0;
 
 fn contains_any(name: &String, list: &Vec<String>) -> bool {
     list.iter().any(|item| name.contains(item))
@@ -179,17 +191,17 @@ fn increment_weapon_counter(
 
 
 
-pub fn process_file(filename: &str){
-    let path = Path::new(filename);
+pub fn process_file(path: &PathBuf){
+    // let path = Path::new(filename);
     let file = File::open(&path).unwrap();
-    if filename.ends_with(".zip.acmi"){
-        println!("Zipfile handling");
+    if path.to_str().unwrap().ends_with(".zip.acmi"){
+        println!("Zipfile handling: {}", path.to_str().unwrap());
         let mut archive_contents=zip::ZipArchive::new(file).unwrap();
         let mut buf_reader = BufReader::new(archive_contents.by_index(0).unwrap());
         
         process_reader(&mut buf_reader);
     } else {
-        println!("Normal handling");
+        println!("Normal handling: {}", path.to_str().unwrap());
         process_reader(&mut BufReader::new(file));
     }
 
@@ -198,16 +210,43 @@ pub fn process_file(filename: &str){
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let start = Instant::now();
-
     let mut files: Vec<String> = Vec::new();
 
-    files.push(r"Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip.acmi".to_string());
-    files.push(r"Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip\Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].txt.acmi".to_string());
+    match get_files_in_folder(r"C:\Users\Nima\Documents\Tacview\") {
+        Ok(files) => {
+            for file in files {
+                if file.is_dir() {
+                    println!("{} is a directory", file.display());
+                    continue;
+                } 
+                if file.is_symlink() {
+                    println!("{} is a symlink", file.display());
+                    continue;
+                }
+                
+                let Ok(m) = file.metadata() else {
+                    println!("Could not get metadata for {}", file.display());
+                    continue;
+                };
 
-    for f in files {
-        process_file(&f);
+                if m.len() == 0 {
+                        println!("{} is an empty file", file.display());
+                        continue;
+                }
+                process_file(&file);
+                // println!("{} is a file", file.display());
+            }
+        }
+        Err(e) => println!("Error: {}", e),
     }
+
+    
+    // files.push(r"Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip.acmi".to_string());
+    // files.push(r"Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip\Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].txt.acmi".to_string());
+    // files.push(r"Tacview-20240924-003100-DCS-Client-Operation-Sirab_Part_2_20240923-1.zip.acmi".to_string());
+    // for f in files {
+    //     process_file(&f);
+    // }
 
 
     Ok(())
