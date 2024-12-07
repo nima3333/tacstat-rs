@@ -21,3 +21,20 @@ impl PlayerInfo {
     }
 }
 
+
+#[derive(Debug, Clone)]
+pub struct PartialPlayerInfo {
+    pub name: String,
+    pub vehicle: String,
+}
+
+
+impl PartialPlayerInfo {
+    pub fn new(name: String, vehicle: String) -> Self {
+        Self {
+            name,
+            vehicle,
+        }
+    }
+}
+

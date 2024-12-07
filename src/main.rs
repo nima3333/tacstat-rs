@@ -1,6 +1,7 @@
 mod models;
 mod utils;
 
+use models::PartialPlayerInfo;
 use models::{GameState, PlayerInfo, Position};
 use regex::Regex;
 use std::collections::HashMap;
@@ -12,7 +13,7 @@ use zip::ZipArchive;
 use std::path::Path;
 use std::time::Instant;
 
-const WEAPON_DISTANCE_THRESHOLD: f32 = 0.1;
+const WEAPON_DISTANCE_THRESHOLD: f32 = 0.5;
 
 fn contains_any(name: &String, list: &Vec<String>) -> bool {
     list.iter().any(|item| name.contains(item))
@@ -21,7 +22,7 @@ fn contains_any(name: &String, list: &Vec<String>) -> bool {
 fn create_matcher(ids: &HashMap<i32, PlayerInfo>) -> Regex {
     let id_pattern = ids
         .keys()
-        .map(|k| format!("{:X}", k))
+        .map(|k| format!("{:x}", k))
         .collect::<Vec<_>>()
         .join("|");
     Regex::new(&format!(
@@ -43,11 +44,13 @@ fn increment_weapon_counter(
         .or_insert(1);
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>>{
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
 
     // Open the ZIP file
-    let file = File::open("Tacview-20240924-003100-DCS-Client-Operation-Sirab_Part_2_20240923-1.zip.acmi")?;
+    let file = File::open(
+        "Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip.acmi",
+    )?;
     let mut archive = ZipArchive::new(file)?;
 
     // Check if there is only one file in the archive
@@ -62,7 +65,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     // Create a buffered reader for the ZIP file
     let reader = BufReader::new(zip_file);
-    
 
     // Time
     let mut gamestate = GameState::new();
@@ -73,13 +75,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let mut bool_watch = true;
 
     // Regex patterns
-    let pilot_creation_pattern = Regex::new(r"^([0-9a-f]+),T=([0-9\.-]+)\|([0-9\.-]+)\|([0-9\.-]+)[0-9\.|-]+,Type=([\w+]+),Name=([\w+\- \._]+),Pilot=([\w+\- \|]+)").unwrap();
-    let weapon_creation_pattern = Regex::new(r"^([0-9a-f]+),T=([0-9\.-]+)\|([0-9\.-]+)\|([0-9\.-]+)[0-9\.|-]+,Type=([\w+]+),Name=([\w+\- \._]+)").unwrap();
+    let pilot_relaxed_creation_pattern = Regex::new(r"^([0-9a-f]+),").unwrap();
+    let pilot_creation_pattern = Regex::new(r"^([0-9a-f]+),T=([0-9\.-]+)\|([0-9\.-]+)\|([0-9\.-]+)[0-9\.|-]+,Type=([^,]+),Name=([^,]+),Pilot=([^,]+)").unwrap();
+    let weapon_creation_pattern = Regex::new(
+        r"^([0-9a-f]+),T=([0-9\.-]+)\|([0-9\.-]+)\|([0-9\.-]+)[0-9\.|-]+,Type=([^,]+),Name=([^,]+)",
+    )
+    .unwrap();
 
     let mut coord_pattern = create_matcher(&gamestate.players);
     // Parse file
-    for line in reader.lines()
-    {
+    for line in reader.lines() {
         match line? {
             line if line.contains("Pilot=") => {
                 if let Some(caps) = pilot_creation_pattern.captures(&line) {
@@ -93,9 +98,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     if contains_any(&name, &whitelist) {
                         gamestate.add_player(id, name, vehicle, Position::new(lat, long, alt));
                         coord_pattern = create_matcher(&gamestate.players);
+                    } else {
+                        gamestate.add_world_player(id, name, vehicle);
                     }
                 }
             }
+            line if line.contains("PilotHead") => {
+                if let Some(caps) = pilot_relaxed_creation_pattern.captures(&line) {
+                    let id = i32::from_str_radix(&caps[1], 16).expect("Invalid ID");
+                    if let Some(entry) = gamestate.players.get_mut(&id) {
+                    } else {
+                        let player_info: PartialPlayerInfo =
+                            gamestate.partial_players.get(&id).unwrap().clone();
+                        gamestate.add_player(
+                            id,
+                            player_info.name,
+                            player_info.vehicle,
+                            Position::new(0.0, 0.0, 0.0),
+                        );
+                        coord_pattern = create_matcher(&gamestate.players);
+                    }
+                }
+            }
+
             line if line.starts_with('#') => {
                 gamestate.current_time = line
                     .strip_prefix('#')
