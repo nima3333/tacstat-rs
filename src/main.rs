@@ -2,20 +2,17 @@ mod models;
 mod utils;
 
 use models::PartialPlayerInfo;
-use models::{GameState, PlayerInfo, Position, ParsingResult};
+use models::{GameState, ParsingResult, PlayerInfo, Position};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-use std::path::Path;
-use std::time::Instant;
-
-use std::{fs, io, path::PathBuf};
-use rayon::prelude::*;
+use dashmap::DashMap;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
-use dashmap::DashMap;
+use rayon::prelude::*;
+use std::{fs, io, path::PathBuf};
 
 fn get_files_in_folder(path: &str) -> io::Result<Vec<PathBuf>> {
     let entries = fs::read_dir(path)?;
@@ -25,9 +22,7 @@ fn get_files_in_folder(path: &str) -> io::Result<Vec<PathBuf>> {
     Ok(all)
 }
 
-fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Error>{   
-    let start = Instant::now();
- 
+fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Error> {
     // Time
     let mut gamestate = GameState::new();
     // Names to whitelist
@@ -44,7 +39,7 @@ fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Er
     .unwrap();
 
     let mut coord_pattern = create_matcher(&gamestate.players);
-    
+
     // Parse file
     for line in reader.lines() {
         match line.expect("Unable to read line") {
@@ -92,12 +87,12 @@ fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Er
                 bool_watch = !bool_watch;
             }
             line if line.starts_with('-') => {
-                let id = match i32::from_str_radix(line.strip_prefix('-').expect("Strip error"), 16){
-                    Ok(num)=>num,
-                    Err(error)=>{
+                let id = match i32::from_str_radix(line.strip_prefix('-').expect("Strip error"), 16)
+                {
+                    Ok(num) => num,
+                    Err(_error) => {
                         continue;
                     }
-                
                 };
                 if let Some(entry) = gamestate.players.get_mut(&id) {
                     entry.mark_deleted(gamestate.current_time);
@@ -155,8 +150,8 @@ fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Er
         }
     }
 
-    for (&id, player_info) in &mut gamestate.players {
-        if(player_info.deletion_time < 0.0){
+    for (&_id, player_info) in &mut gamestate.players {
+        if player_info.deletion_time < 0.0 {
             player_info.deletion_time = gamestate.current_time;
         }
     }
@@ -164,12 +159,9 @@ fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Er
     // println!("{:#?}", gamestate.weapon_stats);
     // println!("{:#?}", gamestate.players);
 
-    let duration = start.elapsed();
-    // println!("Execution time: {:?}", duration);
-
-    Ok(ParsingResult{
+    Ok(ParsingResult {
         players: gamestate.players,
-        weapon_stats: gamestate.weapon_stats
+        weapon_stats: gamestate.weapon_stats,
     })
 }
 
@@ -204,28 +196,31 @@ fn increment_weapon_counter(
         .or_insert(1);
 }
 
-
-
-pub fn process_file(path: &PathBuf) -> Result<ParsingResult, std::io::Error>{
+pub fn process_file(path: &PathBuf) -> Result<ParsingResult, std::io::Error> {
     // let path = Path::new(filename);
     let file = File::open(&path).unwrap();
-    if path.to_str().unwrap().ends_with(".zip.acmi"){
-        let mut archive_contents = zip::ZipArchive::new(file)
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to open zip archive"))?;
-        
-        // Assuming the archive has at least one file
-        let first_file = archive_contents.by_index(0)
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to read zip contents"))?;
+    if path.to_str().unwrap().ends_with(".zip.acmi") {
+        let mut archive_contents = zip::ZipArchive::new(file).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Failed to open zip archive",
+            )
+        })?;
 
-            let mut buf_reader = BufReader::new(first_file);
-        
+        // Assuming the archive has at least one file
+        let first_file = archive_contents.by_index(0).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Failed to read zip contents",
+            )
+        })?;
+
+        let mut buf_reader = BufReader::new(first_file);
+
         return process_reader(&mut buf_reader);
     } else {
         return process_reader(&mut BufReader::new(file));
     }
-
-
-
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -273,25 +268,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .progress_chars("#>-"),
     );
 
-    let mut global_result_vehicle: DashMap<String, f64> = DashMap::new();
-    let mut global_result_weapons: DashMap<String, i64> = DashMap::new();
+    let global_result_vehicle: DashMap<String, f64> = DashMap::new();
+    let _global_result_weapons: DashMap<String, i64> = DashMap::new();
 
     // Process files in parallel using Rayon
     files.par_iter().for_each(|file| {
         match process_file(file) {
             Ok(result) => {
-                for (&id, player_info) in &result.players {
-                    let play_time = (player_info.deletion_time - player_info.creation_time)/3600.0;
+                for (&_id, player_info) in &result.players {
+                    let play_time =
+                        (player_info.deletion_time - player_info.creation_time) / 3600.0;
 
                     global_result_vehicle
-                    .entry(player_info.vehicle.clone()) // Access the entry for the key
-                    .and_modify(|v| *v += play_time) // If the key exists, modify the value
-                    .or_insert(play_time); // If the key doesn't exist, insert the new value
+                        .entry(player_info.vehicle.clone()) // Access the entry for the key
+                        .and_modify(|v| *v += play_time) // If the key exists, modify the value
+                        .or_insert(play_time); // If the key doesn't exist, insert the new value
                 }
             }
-            Err(e) => {
+            Err(_e) => {
                 // eprintln!("Error processing file: {:?}", e);
-                // Handle the error
             }
         }
         progress_bar.inc(1);
@@ -306,7 +301,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     hash_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // hash_vec.sort_by(|a, b| b.1.cmp(a.1));
-    
+
     println!("{:?}", hash_vec);
 
     Ok(())
