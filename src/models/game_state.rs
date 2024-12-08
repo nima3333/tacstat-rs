@@ -31,3 +31,9 @@ impl GameState {
     }
 }
 
+
+#[derive(Debug, Clone)]
+pub struct ParsingResult {
+    pub players: HashMap<i32, PlayerInfo>,
+    pub weapon_stats: HashMap<i32, HashMap<String, i32>>,
+}

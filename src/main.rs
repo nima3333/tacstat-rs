@@ -2,7 +2,7 @@ mod models;
 mod utils;
 
 use models::PartialPlayerInfo;
-use models::{GameState, PlayerInfo, Position};
+use models::{GameState, PlayerInfo, Position, ParsingResult};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs::File;
@@ -12,6 +12,10 @@ use std::path::Path;
 use std::time::Instant;
 
 use std::{fs, io, path::PathBuf};
+use rayon::prelude::*;
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
+use dashmap::DashMap;
 
 fn get_files_in_folder(path: &str) -> io::Result<Vec<PathBuf>> {
     let entries = fs::read_dir(path)?;
@@ -21,7 +25,7 @@ fn get_files_in_folder(path: &str) -> io::Result<Vec<PathBuf>> {
     Ok(all)
 }
 
-fn process_reader(reader: &mut dyn BufRead){   
+fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Error>{   
     let start = Instant::now();
  
     // Time
@@ -150,12 +154,21 @@ fn process_reader(reader: &mut dyn BufRead){
             _ => {} // Ignore lines that don't match any condition
         }
     }
-    println!("{:#?}", gamestate.weapon_stats);
-    println!("{:#?}", gamestate.players);
+
+    for (&id, player_info) in &mut gamestate.players {
+        player_info.deletion_time = gamestate.current_time;
+    }
+
+    // println!("{:#?}", gamestate.weapon_stats);
+    // println!("{:#?}", gamestate.players);
 
     let duration = start.elapsed();
-    println!("Execution time: {:?}", duration);
+    // println!("Execution time: {:?}", duration);
 
+    Ok(ParsingResult{
+        players: gamestate.players,
+        weapon_stats: gamestate.weapon_stats
+    })
 }
 
 const WEAPON_DISTANCE_THRESHOLD: f32 = 1.0;
@@ -191,18 +204,22 @@ fn increment_weapon_counter(
 
 
 
-pub fn process_file(path: &PathBuf){
+pub fn process_file(path: &PathBuf) -> Result<ParsingResult, std::io::Error>{
     // let path = Path::new(filename);
     let file = File::open(&path).unwrap();
     if path.to_str().unwrap().ends_with(".zip.acmi"){
-        println!("Zipfile handling: {}", path.to_str().unwrap());
-        let mut archive_contents=zip::ZipArchive::new(file).unwrap();
-        let mut buf_reader = BufReader::new(archive_contents.by_index(0).unwrap());
+        let mut archive_contents = zip::ZipArchive::new(file)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to open zip archive"))?;
         
-        process_reader(&mut buf_reader);
+        // Assuming the archive has at least one file
+        let first_file = archive_contents.by_index(0)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to read zip contents"))?;
+
+            let mut buf_reader = BufReader::new(first_file);
+        
+        return process_reader(&mut buf_reader);
     } else {
-        println!("Normal handling: {}", path.to_str().unwrap());
-        process_reader(&mut BufReader::new(file));
+        return process_reader(&mut BufReader::new(file));
     }
 
 
@@ -210,44 +227,85 @@ pub fn process_file(path: &PathBuf){
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut files: Vec<String> = Vec::new();
+    let mut files: Vec<PathBuf> = Vec::new();
 
     match get_files_in_folder(r"C:\Users\Nima\Documents\Tacview\") {
-        Ok(files) => {
-            for file in files {
+        Ok(file_paths) => {
+            // Collect all valid file paths into the vector
+            files.extend(file_paths.iter().filter_map(|file| {
                 if file.is_dir() {
                     println!("{} is a directory", file.display());
-                    continue;
-                } 
-                if file.is_symlink() {
+                    None
+                } else if file.is_symlink() {
                     println!("{} is a symlink", file.display());
-                    continue;
+                    None
+                } else {
+                    match file.metadata() {
+                        Ok(m) => {
+                            if m.len() == 0 {
+                                println!("{} is an empty file", file.display());
+                                None
+                            } else {
+                                Some(file.clone())
+                            }
+                        }
+                        Err(_) => {
+                            println!("Could not get metadata for {}", file.display());
+                            None
+                        }
+                    }
                 }
-                
-                let Ok(m) = file.metadata() else {
-                    println!("Could not get metadata for {}", file.display());
-                    continue;
-                };
-
-                if m.len() == 0 {
-                        println!("{} is an empty file", file.display());
-                        continue;
-                }
-                process_file(&file);
-                // println!("{} is a file", file.display());
-            }
+            }));
         }
-        Err(e) => println!("Error: {}", e),
+        Err(e) => {
+            println!("Error: {}", e);
+            return Ok(());
+        }
     }
 
-    
-    // files.push(r"Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip.acmi".to_string());
-    // files.push(r"Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].zip\Tacview-20241205-233241-DCS-Client-4YA_SYR_PVE2_DS_V2.66[02_MAY_FEW].txt.acmi".to_string());
-    // files.push(r"Tacview-20240924-003100-DCS-Client-Operation-Sirab_Part_2_20240923-1.zip.acmi".to_string());
-    // for f in files {
-    //     process_file(&f);
-    // }
+    let progress_bar = ProgressBar::new(files.len() as u64);
+    progress_bar.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("#>-"),
+    );
 
+    let mut global_result_vehicle: DashMap<String, f64> = DashMap::new();
+    let mut global_result_weapons: DashMap<String, i64> = DashMap::new();
+
+    // Process files in parallel using Rayon
+    files.par_iter().for_each(|file| {
+        match process_file(file) {
+            Ok(result) => {
+                for (&id, player_info) in &result.players {
+                    let play_time = (player_info.deletion_time - player_info.creation_time)/3600.0;
+
+                    global_result_vehicle
+                    .entry(player_info.vehicle.clone()) // Access the entry for the key
+                    .and_modify(|v| *v += play_time) // If the key exists, modify the value
+                    .or_insert(play_time); // If the key doesn't exist, insert the new value
+                }
+            }
+            Err(e) => {
+                // eprintln!("Error processing file: {:?}", e);
+                // Handle the error
+            }
+        }
+        progress_bar.inc(1);
+    });
+
+    progress_bar.finish_with_message("Processing complete!");
+    let mut hash_vec: Vec<(String, f64)> = global_result_vehicle
+        .iter()
+        .map(|entry| (entry.key().clone(), entry.value().clone()))
+        .collect();
+
+    hash_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // hash_vec.sort_by(|a, b| b.1.cmp(a.1));
+    
+    println!("{:?}", hash_vec);
 
     Ok(())
 }
