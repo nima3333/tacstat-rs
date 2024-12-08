@@ -304,5 +304,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("{:?}", hash_vec);
 
+    let total_time : f64 = hash_vec
+        .iter()
+        .map(|entry| entry.1)
+        .sum();
+
+    println!("Total time {}", total_time);
+
     Ok(())
 }
