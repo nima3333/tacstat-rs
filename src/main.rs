@@ -156,7 +156,9 @@ fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Er
     }
 
     for (&id, player_info) in &mut gamestate.players {
-        player_info.deletion_time = gamestate.current_time;
+        if(player_info.deletion_time < 0.0){
+            player_info.deletion_time = gamestate.current_time;
+        }
     }
 
     // println!("{:#?}", gamestate.weapon_stats);

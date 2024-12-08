@@ -12,7 +12,7 @@ impl PlayerInfo {
             name,
             vehicle,
             creation_time,
-            deletion_time: 0.0,
+            deletion_time: -1.0,
         }
     }
 
