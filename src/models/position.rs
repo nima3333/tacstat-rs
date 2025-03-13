@@ -1,4 +1,5 @@
-use crate::utils::computation::haversine_distance;
+// use crate::utils::computation::haversine_distance;
+use crate::utils::computation::haversine_distance_with_altitude;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Position {
@@ -25,6 +26,7 @@ impl Position {
     }
 
     pub fn distance_to(&self, other: &Position) -> f32 {
-        haversine_distance(self.lat, self.long, other.lat, other.long)
+        // haversine_distance(self.lat, self.long, other.lat, other.long)
+        haversine_distance_with_altitude(self.lat, self.long, self.alt, other.lat, other.long, other.alt)
     }
 }

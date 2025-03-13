@@ -13,6 +13,7 @@ use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use rayon::prelude::*;
 use std::{fs, io, path::PathBuf};
+use serde::{Serialize, Deserialize};
 
 fn get_files_in_folder(path: &str) -> io::Result<Vec<PathBuf>> {
     let entries = fs::read_dir(path)?;
@@ -129,7 +130,8 @@ fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Er
                         if !gamestate.positions.is_empty() {
                             let lat = caps[2].parse::<f32>().expect("Invalid latitude");
                             let long = caps[3].parse::<f32>().expect("Invalid longitude");
-                            let position_weapon = Position::new(lat, long, 0.0);
+                            let alt = caps[4].parse::<f32>().expect("Invalid longitude");
+                            let position_weapon = Position::new(lat, long, alt);
 
                             for (&id, &position) in &gamestate.positions {
                                 let dist: f32 = position.distance_to(&position_weapon);
@@ -165,7 +167,7 @@ fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Er
     })
 }
 
-const WEAPON_DISTANCE_THRESHOLD: f32 = 1.0;
+const WEAPON_DISTANCE_THRESHOLD: f32 = 2.0;
 
 fn contains_any(name: &String, list: &Vec<String>) -> bool {
     list.iter().any(|item| name.contains(item))
@@ -269,7 +271,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let global_result_vehicle: DashMap<String, f64> = DashMap::new();
-    let _global_result_weapons: DashMap<String, i64> = DashMap::new();
+    let global_result_weapons: DashMap<String, i64> = DashMap::new();
 
     // Process files in parallel using Rayon
     files.par_iter().for_each(|file| {
@@ -283,6 +285,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .entry(player_info.vehicle.clone()) // Access the entry for the key
                         .and_modify(|v| *v += play_time) // If the key exists, modify the value
                         .or_insert(play_time); // If the key doesn't exist, insert the new value
+
+                    // Retrieve weapon stats for the current player by its id.
+                    if let Some(weapon_map) = result.weapon_stats.get(&_id) {
+                        for (weapon, count) in weapon_map {
+                            global_result_weapons
+                                .entry(weapon.clone()) // Clone the string since weapon is a &String.
+                                .and_modify(|c| *c += *count as i64)
+                                .or_insert(*count as i64);
+                        }
+                    }
                 }
             }
             Err(_e) => {
@@ -310,6 +322,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .sum();
 
     println!("Total time {}", total_time);
+    
+    // Write for python viz
+    let pickle_bytes = serde_pickle::to_vec(&hash_vec, Default::default())?;
+    std::fs::write("data.pkl", pickle_bytes)?;
+    // Write for python viz
+    let weapon_vec: Vec<(String, i64)> = global_result_weapons
+        .iter()
+        .map(|entry| (entry.key().clone(), entry.value().clone()))
+        .collect();
+
+    let pickle_bytes = serde_pickle::to_vec(&weapon_vec, Default::default())?;
+    std::fs::write("weapon.pkl", pickle_bytes)?;
 
     Ok(())
 }
