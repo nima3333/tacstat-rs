@@ -2,6 +2,7 @@
 name = "tacstat-rs"
 version = "0.1.0"
 edition = "2021"
+default-run = "tacstat-rs"  # Add this line
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,3 +12,6 @@ indicatif = "0.17.9"
 rayon = "1.10.0"
 regex = "1.11.0"
 zip = "0.6"
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "time"] }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"

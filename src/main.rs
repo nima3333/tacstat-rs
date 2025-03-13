@@ -14,6 +14,11 @@ use indicatif::ProgressStyle;
 use rayon::prelude::*;
 use std::{fs, io, path::PathBuf};
 
+use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
+use anyhow::Result;
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
+
 fn get_files_in_folder(path: &str) -> io::Result<Vec<PathBuf>> {
     let entries = fs::read_dir(path)?;
     let all: Vec<PathBuf> = entries
@@ -21,6 +26,89 @@ fn get_files_in_folder(path: &str) -> io::Result<Vec<PathBuf>> {
         .collect();
     Ok(all)
 }
+
+// Function to initialize the database
+async fn init_db() -> Result<Pool<Sqlite>> {
+    let pool = SqlitePool::connect("sqlite:tacview.db").await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS flights (
+            flight_id INTEGER PRIMARY KEY,
+            player_name TEXT NOT NULL,
+            vehicle TEXT NOT NULL,
+            time_in_game DOUBLE PRECISION NOT NULL,
+            file_date TIMESTAMP NOT NULL
+        )"
+    ).execute(&pool).await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS weapons (
+            weapon_id INTEGER PRIMARY KEY,
+            weapon_name TEXT UNIQUE NOT NULL
+        )"
+    ).execute(&pool).await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS flight_weapons (
+            flight_id INTEGER,
+            weapon_id INTEGER,
+            count INTEGER NOT NULL,
+            PRIMARY KEY (flight_id, weapon_id),
+            FOREIGN KEY (flight_id) REFERENCES flights(flight_id),
+            FOREIGN KEY (weapon_id) REFERENCES weapons(weapon_id)
+        )"
+    ).execute(&pool).await?;
+
+    Ok(pool)
+}
+
+async fn store_parsing_result(pool: &Pool<Sqlite>, result: ParsingResult, file_date: i64) -> Result<()> {
+    let mut tx = pool.begin().await?;
+ 
+    for (player_id, player_info) in result.players {
+        let flight = sqlx::query!(
+            "INSERT INTO flights (player_name, vehicle, time_in_game, file_date) 
+             VALUES (?, ?, ?, ?) RETURNING flight_id",
+            player_info.name,
+            player_info.vehicle,
+            player_info.time_in_game,
+            file_date
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+ 
+        if let Some(weapon_stats) = result.weapon_stats.get(&player_id) {
+            for (weapon_name, count) in weapon_stats {
+                sqlx::query!(
+                    "INSERT OR IGNORE INTO weapons (weapon_name) VALUES (?)",
+                    weapon_name
+                )
+                .execute(&mut *tx)
+                .await?;
+ 
+                let weapon = sqlx::query!(
+                    "SELECT weapon_id FROM weapons WHERE weapon_name = ?",
+                    weapon_name
+                )
+                .fetch_one(&mut *tx)
+                .await?;
+ 
+                sqlx::query!(
+                    "INSERT INTO flight_weapons (flight_id, weapon_id, count) VALUES (?, ?, ?)",
+                    flight.flight_id,
+                    weapon.weapon_id,
+                    count
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
+ 
+    tx.commit().await?;
+    Ok(())
+ }
+
 
 fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Error> {
     // Time
@@ -156,6 +244,10 @@ fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Er
         }
     }
 
+    for (&_id, player_info) in &mut gamestate.players {
+        player_info.time_in_game = player_info.deletion_time - player_info.creation_time;
+    }
+
     // println!("{:#?}", gamestate.weapon_stats);
     // println!("{:#?}", gamestate.players);
 
@@ -165,7 +257,7 @@ fn process_reader(reader: &mut dyn BufRead) -> Result<ParsingResult, std::io::Er
     })
 }
 
-const WEAPON_DISTANCE_THRESHOLD: f32 = 1.0;
+const WEAPON_DISTANCE_THRESHOLD: f32 = 0.1;
 
 fn contains_any(name: &String, list: &Vec<String>) -> bool {
     list.iter().any(|item| name.contains(item))
@@ -223,7 +315,9 @@ pub fn process_file(path: &PathBuf) -> Result<ParsingResult, std::io::Error> {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut files: Vec<PathBuf> = Vec::new();
 
     match get_files_in_folder(r"C:\Users\Nima\Documents\Tacview\") {
@@ -260,6 +354,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let pool = SqlitePool::connect("sqlite:tacview.db").await?;
+    let pool = Arc::new(pool);
+ 
+    let (tx, mut rx) = mpsc::channel(100);
+
+    let db_handle = {
+        let pool = Arc::clone(&pool);
+        tokio::spawn(async move {
+            while let Some((result, file_date)) = rx.recv().await {
+                if let Err(e) = store_parsing_result(&pool, result, file_date).await {
+                    eprintln!("Error storing result: {}", e);
+                }
+             }
+        })
+    };
+
     let progress_bar = ProgressBar::new(files.len() as u64);
     progress_bar.set_style(
         ProgressStyle::default_bar()
@@ -284,6 +394,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .and_modify(|v| *v += play_time) // If the key exists, modify the value
                         .or_insert(play_time); // If the key doesn't exist, insert the new value
                 }
+
+                let file_date = match std::fs::metadata(file)
+                    .and_then(|m| m.created())
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))
+                    {
+                        Ok(duration) => duration.as_secs() as i64,
+                        Err(e) => {
+                            eprintln!("Error getting file date: {}", e);
+                            return;
+                        }
+                    };
+
+                
+
+                if let Err(e) = tx.blocking_send((result, file_date)) {
+                    eprintln!("Error sending result: {}", e);
+                }
+     
             }
             Err(_e) => {
                 // eprintln!("Error processing file: {:?}", e);
@@ -292,6 +422,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         progress_bar.inc(1);
     });
 
+    drop(tx);
+    db_handle.await?;
+ 
     progress_bar.finish_with_message("Processing complete!");
     let mut hash_vec: Vec<(String, f64)> = global_result_vehicle
         .iter()

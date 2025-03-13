@@ -4,6 +4,7 @@ pub struct PlayerInfo {
     pub vehicle: String,
     pub creation_time: f64,
     pub deletion_time: f64,
+    pub time_in_game: f64
 }
 
 impl PlayerInfo {
@@ -13,6 +14,7 @@ impl PlayerInfo {
             vehicle,
             creation_time,
             deletion_time: -1.0,
+            time_in_game: -1.0,
         }
     }
 
